@@ -486,7 +486,7 @@
                 <label for="confirm-password">Confirm Password</label>
                 <input type="password" id="confirm-password" placeholder="Confirm password">
             </div>
-            <button id="setup-btn">Create Profile</button>
+            <button id="setup-btn" onclick="handleSetupBtn()">Create Profile</button>
             <p style="margin-top: 15px; font-size: 0.8rem; color: var(--text-dim); text-align: center;">
                 🔒 Your password encrypts all messages. Share it only with your chat partner.<br>
                 <span id="secure-warning" style="color: var(--yellow); display: none;">⚠️ HTTPS required for encryption. Use HTTPS or localhost.</span>
@@ -676,9 +676,12 @@
         
         // ============ INIT ============
         window.onload = async function() {
+            console.log('Page loaded');
+            
             // Show warning if not in secure context
             if (!isSecure) {
-                document.getElementById('secure-warning').style.display = 'inline';
+                const warning = document.getElementById('secure-warning');
+                if (warning) warning.style.display = 'inline';
             }
             
             const saved = localStorage.getItem('p2pchat_profile');
@@ -704,8 +707,9 @@
         };
         
         // ============ SETUP ============
-        document.getElementById('setup-btn').onclick = async function() {
+        async function handleSetupBtn() {
             console.log('Setup button clicked');
+            
             const username = document.getElementById('username').value.trim();
             const password = document.getElementById('password').value;
             const confirm = document.getElementById('confirm-password').value;
@@ -748,7 +752,7 @@
                 console.error('Setup failed:', e);
                 alert('Setup failed: ' + e.message);
             }
-        };
+        }
         
         function showChatScreen() {
             document.getElementById('setup-screen').style.display = 'none';
