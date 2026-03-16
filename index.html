@@ -488,7 +488,8 @@
             </div>
             <button id="setup-btn">Create Profile</button>
             <p style="margin-top: 15px; font-size: 0.8rem; color: var(--text-dim); text-align: center;">
-                🔒 Your password encrypts all messages. Share it only with your chat partner.
+                🔒 Your password encrypts all messages. Share it only with your chat partner.<br>
+                <span id="secure-warning" style="color: var(--yellow); display: none;">⚠️ HTTPS required for encryption. Use HTTPS or localhost.</span>
             </p>
         </div>
         
@@ -576,6 +577,9 @@
         // ============ CONFIG ============
         const PEER_SERVER = 'peerjs';
         
+        // Check for secure context (required for Web Crypto API)
+        const isSecure = window.isSecureContext || location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+        
         // ============ STATE ============
         let peer = null;
         let conn = null;
@@ -593,6 +597,10 @@
         
         // Derive AES-GCM key from password using PBKDF2
         async function deriveKey(password, salt) {
+            if (!isSecure) {
+                throw new Error('Secure context (HTTPS) required for encryption');
+            }
+            
             const encoder = new TextEncoder();
             const keyMaterial = await crypto.subtle.importKey(
                 'raw',
@@ -666,6 +674,11 @@
         
         // ============ INIT ============
         window.onload = async function() {
+            // Show warning if not in secure context
+            if (!isSecure) {
+                document.getElementById('secure-warning').style.display = 'inline';
+            }
+            
             const saved = localStorage.getItem('p2pchat_profile');
             if (saved) {
                 try {
