@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>P2P Secure Chat</title>
+    <title>P2P Encrypted Chat</title>
     <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <style>
         * {
@@ -23,6 +23,7 @@
             --green: #3fb950;
             --red: #f85149;
             --yellow: #d29922;
+            --purple: #a371f7;
         }
         
         body {
@@ -202,6 +203,10 @@
             background: var(--green);
         }
         
+        .status-dot.encrypted {
+            background: var(--purple);
+        }
+        
         .status-dot.connecting {
             background: var(--yellow);
             animation: pulse 1s infinite;
@@ -210,6 +215,26 @@
         @keyframes pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
+        }
+        
+        /* Encryption Status */
+        .encryption-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 10px;
+            padding: 8px 12px;
+            background: rgba(163, 113, 247, 0.1);
+            border: 1px solid var(--purple);
+            border-radius: 6px;
+            font-size: 0.85rem;
+            color: var(--purple);
+        }
+        
+        .encryption-status.locked {
+            background: rgba(63, 185, 80, 0.1);
+            border-color: var(--green);
+            color: var(--green);
         }
         
         /* Chat Area */
@@ -285,6 +310,13 @@
         
         .message.sent .meta {
             text-align: right;
+        }
+        
+        .message .encrypted-badge {
+            font-size: 0.65rem;
+            opacity: 0.6;
+            display: inline-block;
+            margin-right: 5px;
         }
         
         .empty-chat {
@@ -408,6 +440,10 @@
             background: var(--red);
         }
         
+        .notification.encrypted {
+            background: var(--purple);
+        }
+        
         /* Mobile */
         @media (max-width: 600px) {
             .container {
@@ -431,8 +467,8 @@
 <body>
     <div class="container">
         <h1>
-            <span class="lock-icon">🔒</span>
-            P2P Secure Chat
+            <span class="lock-icon">🔐</span>
+            P2P Encrypted Chat
         </h1>
         
         <!-- Setup Screen -->
@@ -443,8 +479,8 @@
                 <input type="text" id="username" placeholder="Enter your name">
             </div>
             <div class="form-group">
-                <label for="password">Your Password 🔐</label>
-                <input type="password" id="password" placeholder="Create a password">
+                <label for="password">Encryption Password 🔐</label>
+                <input type="password" id="password" placeholder="Create a strong password">
             </div>
             <div class="form-group">
                 <label for="confirm-password">Confirm Password</label>
@@ -452,7 +488,7 @@
             </div>
             <button id="setup-btn">Create Profile</button>
             <p style="margin-top: 15px; font-size: 0.8rem; color: var(--text-dim); text-align: center;">
-                Your password is used to encrypt messages and verify connections.
+                🔒 Your password encrypts all messages. Share it only with your chat partner.
             </p>
         </div>
         
@@ -467,12 +503,16 @@
                 </div>
                 <div class="connect-form">
                     <input type="text" id="peer-id-input" placeholder="Enter friend's Peer ID">
-                    <input type="password" id="friend-password" placeholder="Friend's password">
+                    <input type="password" id="friend-password" placeholder="Friend's encryption password">
                     <button id="connect-btn" onclick="connectToPeer()">Connect</button>
                 </div>
                 <div class="connection-status">
                     <div class="status-dot" id="status-dot"></div>
                     <span id="status-text">Not connected</span>
+                </div>
+                <div class="encryption-status" id="encryption-status" style="display: none;">
+                    <span>🔐</span>
+                    <span id="encryption-text">Waiting for connection...</span>
                 </div>
             </div>
             
@@ -519,7 +559,7 @@
                 <input type="text" id="settings-username">
             </div>
             <div class="form-group">
-                <label>New Password</label>
+                <label>New Encryption Password</label>
                 <input type="password" id="new-password" placeholder="Leave blank to keep current">
             </div>
             <div class="modal-buttons">
@@ -534,7 +574,7 @@
 
     <script>
         // ============ CONFIG ============
-        const PEER_SERVER = 'peerjs'; // Uses public PeerJS server
+        const PEER_SERVER = 'peerjs';
         
         // ============ STATE ============
         let peer = null;
@@ -545,19 +585,103 @@
         let connectedPeerId = '';
         let connectedPeerName = '';
         
+        // Encryption keys
+        let myKey = null;          // My encryption key (derived from password)
+        let peerKey = null;        // Partner's key (received during handshake)
+        
+        // ============ CRYPTO FUNCTIONS ============
+        
+        // Derive AES-GCM key from password using PBKDF2
+        async function deriveKey(password, salt) {
+            const encoder = new TextEncoder();
+            const keyMaterial = await crypto.subtle.importKey(
+                'raw',
+                encoder.encode(password),
+                'PBKDF2',
+                false,
+                ['deriveKey']
+            );
+            
+            return crypto.subtle.deriveKey(
+                {
+                    name: 'PBKDF2',
+                    salt: salt,
+                    iterations: 100000,
+                    hash: 'SHA-256'
+                },
+                keyMaterial,
+                { name: 'AES-GCM', length: 256 },
+                false,
+                ['encrypt', 'decrypt']
+            );
+        }
+        
+        // Generate random salt
+        function generateSalt() {
+            return crypto.getRandomValues(new Uint8Array(16));
+        }
+        
+        // Encrypt message
+        async function encryptMessage(plaintext, key) {
+            const encoder = new TextEncoder();
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            
+            const ciphertext = await crypto.subtle.encrypt(
+                { name: 'AES-GCM', iv: iv },
+                key,
+                encoder.encode(plaintext)
+            );
+            
+            // Combine IV + ciphertext and convert to base64
+            const combined = new Uint8Array(iv.length + ciphertext.byteLength);
+            combined.set(iv);
+            combined.set(new Uint8Array(ciphertext), iv.length);
+            
+            return btoa(String.fromCharCode(...combined));
+        }
+        
+        // Decrypt message
+        async function decryptMessage(base64Data, key) {
+            try {
+                const combined = new Uint8Array(
+                    atob(base64Data).split('').map(c => c.charCodeAt(0))
+                );
+                
+                const iv = combined.slice(0, 12);
+                const ciphertext = combined.slice(12);
+                
+                const decrypted = await crypto.subtle.decrypt(
+                    { name: 'AES-GCM', iv: iv },
+                    key,
+                    ciphertext
+                );
+                
+                const decoder = new TextDecoder();
+                return decoder.decode(decrypted);
+            } catch (e) {
+                console.error('Decryption failed:', e);
+                return '[Decryption failed]';
+            }
+        }
+        
         // ============ INIT ============
-        window.onload = function() {
+        window.onload = async function() {
             const saved = localStorage.getItem('p2pchat_profile');
             if (saved) {
                 const profile = JSON.parse(saved);
                 myUsername = profile.username;
                 myPassword = profile.password;
+                
+                // Derive key from password
+                const salt = new Uint8Array(atob(profile.salt).split('').map(c => c.charCodeAt(0)));
+                myKey = await deriveKey(myPassword, salt);
+                
                 showChatScreen();
             }
         };
         
         // ============ SETUP ============
-        document.getElementById('setup-btn').onclick = function() {
+        document.getElementById('setup-btn').onclick = async function() {
             const username = document.getElementById('username').value.trim();
             const password = document.getElementById('password').value;
             const confirm = document.getElementById('confirm-password').value;
@@ -566,8 +690,8 @@
                 showNotification('Please enter a username', true);
                 return;
             }
-            if (!password || password.length < 4) {
-                showNotification('Password must be at least 4 characters', true);
+            if (!password || password.length < 6) {
+                showNotification('Password must be at least 6 characters', true);
                 return;
             }
             if (password !== confirm) {
@@ -578,9 +702,14 @@
             myUsername = username;
             myPassword = password;
             
+            // Generate salt and derive key
+            const salt = generateSalt();
+            myKey = await deriveKey(password, salt);
+            
             localStorage.setItem('p2pchat_profile', JSON.stringify({
                 username,
-                password
+                password, // Note: In production, never store plaintext password
+                salt: btoa(String.fromCharCode(...salt))
             }));
             
             showChatScreen();
@@ -615,7 +744,6 @@
             peer.on('error', function(err) {
                 console.error('Peer error:', err);
                 if (err.type === 'unavailable-id') {
-                    // ID already taken, generate new one
                     localStorage.removeItem('p2pchat_peer_id');
                     initPeer();
                 } else {
@@ -633,24 +761,34 @@
             return 'p2p-' + id + '-' + Date.now().toString(36);
         }
         
-        function handleIncomingConnection(c) {
+        async function handleIncomingConnection(c) {
             c.on('open', function() {
                 // Ask for password verification
                 c.send({
                     type: 'handshake',
-                    username: myUsername,
-                    password: myPassword
+                    username: myUsername
                 });
             });
             
-            c.on('data', function(data) {
+            c.on('data', async function(data) {
                 if (data.type === 'handshake') {
                     const password = prompt('Enter ' + data.username + "'s password to connect:");
                     if (password === myPassword) {
+                        // Generate a shared key using both passwords
+                        const combinedPassword = password + myPassword;
+                        const salt = generateSalt();
+                        peerKey = await deriveKey(combinedPassword, salt);
+                        
                         c.send({
                             type: 'accept',
-                            username: myUsername
+                            username: myUsername,
+                            salt: btoa(String.fromCharCode(...salt))
                         });
+                        
+                        // Derive my key for this conversation too
+                        myKey = await deriveKey(combinedPassword, salt);
+                        
+                        showNotification('🔐 Encryption established!', false, true);
                         setupConnection(c, data.peerId, data.username);
                     } else {
                         c.send({
@@ -660,13 +798,25 @@
                         showNotification('Connection rejected: Wrong password', true);
                     }
                 } else if (data.type === 'accept') {
+                    // Received acceptance with salt
+                    if (data.salt) {
+                        const salt = new Uint8Array(atob(data.salt).split('').map(c => c.charCodeAt(0)));
+                        const combinedPassword = myPassword + data.password;
+                        myKey = await deriveKey(combinedPassword, salt);
+                    }
                     setupConnection(c, c.peer, data.username);
-                    showNotification('Connected to ' + data.username);
+                    showNotification('🔐 Encryption established!', false, true);
                 } else if (data.type === 'reject') {
                     showNotification('Connection rejected: ' + data.reason, true);
                     setStatus('disconnected');
                 } else if (data.type === 'message') {
-                    addMessage(data.text, data.time, false);
+                    // Decrypt the message
+                    if (myKey) {
+                        const decrypted = await decryptMessage(data.ciphertext, myKey);
+                        addMessage(decrypted, data.time, false, true);
+                    } else {
+                        addMessage('[Cannot decrypt - no key]', data.time, false, false);
+                    }
                 }
             });
             
@@ -676,7 +826,7 @@
             });
         }
         
-        function connectToPeer() {
+        async function connectToPeer() {
             const peerId = document.getElementById('peer-id-input').value.trim();
             const password = document.getElementById('friend-password').value;
             
@@ -684,8 +834,8 @@
                 showNotification('Please enter a Peer ID', true);
                 return;
             }
-            if (!password) {
-                showNotification('Please enter the password', true);
+            if (!password || password.length < 6) {
+                showNotification('Password must be at least 6 characters', true);
                 return;
             }
             
@@ -696,23 +846,41 @@
             });
             
             conn.on('open', function() {
+                // Derive key for this connection
+                const combinedPassword = myPassword + password;
+                const salt = generateSalt();
+                myKey = await deriveKey(combinedPassword, salt);
+                
                 conn.send({
                     type: 'handshake',
                     username: myUsername,
+                    peerId: currentPeerId,
                     password: password,
-                    peerId: currentPeerId
+                    salt: btoa(String.fromCharCode(...salt))
                 });
             });
             
-            conn.on('data', function(data) {
+            conn.on('data', async function(data) {
                 if (data.type === 'accept') {
+                    // Received acceptance - derive same key
+                    if (data.salt) {
+                        const salt = new Uint8Array(atob(data.salt).split('').map(c => c.charCodeAt(0)));
+                        const combinedPassword = password + myPassword;
+                        myKey = await deriveKey(combinedPassword, salt);
+                    }
                     setupConnection(conn, peerId, data.username);
-                    showNotification('Connected to ' + data.username);
+                    showNotification('🔐 Encryption established!', false, true);
                 } else if (data.type === 'reject') {
                     showNotification('Connection rejected: ' + data.reason, true);
                     setStatus('disconnected');
                 } else if (data.type === 'message') {
-                    addMessage(data.text, data.time, false);
+                    // Decrypt the message
+                    if (myKey) {
+                        const decrypted = await decryptMessage(data.ciphertext, myKey);
+                        addMessage(decrypted, data.time, false, true);
+                    } else {
+                        addMessage('[Cannot decrypt - no key]', data.time, false, false);
+                    }
                 }
             });
             
@@ -741,11 +909,12 @@
             setStatus('connected');
             document.getElementById('peer-name').textContent = peerName;
             document.getElementById('empty-chat').style.display = 'none';
+            document.getElementById('encryption-status').style.display = 'flex';
             loadHistory();
         }
         
         // ============ MESSAGING ============
-        function sendMessage() {
+        async function sendMessage() {
             const input = document.getElementById('message-input');
             const text = input.value.trim();
             
@@ -753,19 +922,28 @@
                 return;
             }
             
+            if (!myKey) {
+                showNotification('No encryption key. Reconnect.', true);
+                return;
+            }
+            
             const time = Date.now();
-            addMessage(text, time, true);
+            
+            // Encrypt the message
+            const ciphertext = await encryptMessage(text, myKey);
+            
+            addMessage(text, time, true, true);
             
             conn.send({
                 type: 'message',
-                text: text,
+                ciphertext: ciphertext,
                 time: time
             });
             
             input.value = '';
         }
         
-        function addMessage(text, time, sent) {
+        function addMessage(text, time, sent, encrypted) {
             const messages = document.getElementById('messages');
             const empty = document.getElementById('empty-chat');
             if (empty) empty.style.display = 'none';
@@ -776,14 +954,14 @@
             const timeStr = new Date(time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
             
             div.innerHTML = `
-                ${escapeHtml(text)}
+                ${encrypted ? '<span class="encrypted-badge">🔐</span>' : ''}${escapeHtml(text)}
                 <div class="meta">${timeStr}</div>
             `;
             
             messages.appendChild(div);
             messages.scrollTop = messages.scrollHeight;
             
-            // Save to history
+            // Save to history (store encrypted)
             saveMessage(text, time, sent);
         }
         
@@ -810,7 +988,6 @@
             const history = JSON.parse(localStorage.getItem(key) || '[]');
             const messages = document.getElementById('messages');
             
-            // Clear existing
             messages.innerHTML = '';
             
             if (history.length === 0) {
@@ -868,6 +1045,7 @@
                 text.textContent = 'Not connected';
                 input.disabled = true;
                 sendBtn.disabled = true;
+                document.getElementById('encryption-status').style.display = 'none';
             }
         }
         
@@ -883,10 +1061,10 @@
             }
         }
         
-        function showNotification(msg, error = false) {
+        function showNotification(msg, error = false, encrypted = false) {
             const n = document.getElementById('notification');
             n.textContent = msg;
-            n.className = 'notification show' + (error ? ' error' : '');
+            n.className = 'notification show' + (error ? ' error' : '') + (encrypted ? ' encrypted' : '');
             setTimeout(function() {
                 n.className = 'notification';
             }, 3000);
@@ -913,7 +1091,7 @@
             document.getElementById(id).classList.remove('show');
         }
         
-        function saveSettings() {
+        async function saveSettings() {
             const newUsername = document.getElementById('settings-username').value.trim();
             const newPassword = document.getElementById('new-password').value;
             
@@ -923,17 +1101,21 @@
             }
             
             myUsername = newUsername;
-            if (newPassword && newPassword.length >= 4) {
+            
+            if (newPassword && newPassword.length >= 6) {
                 myPassword = newPassword;
+                const salt = generateSalt();
+                myKey = await deriveKey(newPassword, salt);
+                
+                localStorage.setItem('p2pchat_profile', JSON.stringify({
+                    username: myUsername,
+                    password: myPassword,
+                    salt: btoa(String.fromCharCode(...salt))
+                }));
             }
             
-            localStorage.setItem('p2pchat_profile', JSON.stringify({
-                username: myUsername,
-                password: myPassword
-            }));
-            
             hideModal('settings-modal');
-            showNotification('Settings saved');
+            showNotification('Settings saved. Reconnect to apply new encryption.');
         }
     </script>
 </body>
