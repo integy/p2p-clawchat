@@ -567,6 +567,8 @@
                 <button class="btn-cancel" onclick="hideModal('settings-modal')">Cancel</button>
                 <button onclick="saveSettings()">Save</button>
             </div>
+            <hr style="margin: 20px 0; border-color: var(--border);">
+            <button onclick="clearAllData()" style="background: var(--red);">🗑️ Clear All Data</button>
         </div>
     </div>
     
@@ -703,9 +705,12 @@
         
         // ============ SETUP ============
         document.getElementById('setup-btn').onclick = async function() {
+            console.log('Setup button clicked');
             const username = document.getElementById('username').value.trim();
             const password = document.getElementById('password').value;
             const confirm = document.getElementById('confirm-password').value;
+            
+            console.log('Username:', username, 'Password length:', password.length);
             
             if (!username) {
                 alert('Please enter a username');
@@ -721,20 +726,24 @@
             }
             
             try {
+                console.log('Generating key...');
                 myUsername = username;
                 myPassword = password;
                 
                 // Generate salt and derive key
                 const salt = generateSalt();
                 myKey = await deriveKey(password, salt);
+                console.log('Key generated');
                 
                 localStorage.setItem('p2pchat_profile', JSON.stringify({
                     username: username,
                     password: password,
                     salt: btoa(String.fromCharCode(...salt))
                 }));
+                console.log('Profile saved');
                 
                 showChatScreen();
+                console.log('Chat screen shown');
             } catch (e) {
                 console.error('Setup failed:', e);
                 alert('Setup failed: ' + e.message);
@@ -1115,6 +1124,13 @@
         
         function hideModal(id) {
             document.getElementById(id).classList.remove('show');
+        }
+        
+        function clearAllData() {
+            if (confirm('Are you sure you want to clear ALL data? This will delete your profile, Peer ID, and all chat history.')) {
+                localStorage.clear();
+                location.reload();
+            }
         }
         
         async function saveSettings() {
